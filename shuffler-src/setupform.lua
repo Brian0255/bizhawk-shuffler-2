@@ -24,7 +24,8 @@ function module.make_plugin_window(plugins)
 		},
 		['romlist'] = {
 			make = function(plugin, win, setting, x, y)
-				local games_list = get_games_list()
+                refresh_active_games()
+				local games_list = table_keys(config.active_games)
 				table.insert(games_list, "")
 
 				setting.input = forms.dropdown(win, games_list, x, y, 200, 20)
@@ -281,7 +282,7 @@ function module.initial_setup(callback)
 		else
 			save_new_settings()
 		end
-		get_games_list(true) -- force refresh of the games list
+		refresh_active_games(true)
 
 		forms.destroy(setup_window)
 		callback()
@@ -423,7 +424,9 @@ function module.initial_setup(callback)
 
 	immutable_inputs = { seed_text, seed_btn, plugin_btn }
 
-	if config.current_game ~= nil and #get_games_list(true) > 0 then
+	refresh_active_games(true)
+
+	if config.current_game ~= nil and #table_keys(config.active_games) > 0 then
 		forms.setproperty(resume, "Checked", true)
 		update_resume_state()
 	end
