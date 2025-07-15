@@ -18,7 +18,7 @@ plugin.settings =
 
 plugin.description =
 [[
-	Shuffles the Donkey Kong Country SNES games when you collect a configurable amount of bananas. Only US ROMs are supported (you probably have a US ROM.)
+	Shuffles the Donkey Kong Country SNES games when you collect a configurable amount of bananas. Only US ROMs are supported currently (you probably have a US ROM.)
 
     You can also include the minigame stars from 2/3, as well as the green bananas from 3.
 
