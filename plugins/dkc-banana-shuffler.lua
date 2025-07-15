@@ -2,6 +2,7 @@ local plugin = {}
 
 plugin.name = "DKC Banana Shuffler"
 plugin.author = "OnlySpaghettiCode,TheSoundDefense"
+plugin.minversion = "2.8"
 plugin.settings =
 {
     { name = 'banana_threshold',       type = 'number', label = 'Banana Amount', default = 10 },
@@ -9,15 +10,33 @@ plugin.settings =
     { name='minigame_star_threshold', type = 'number', label='Minigame Star Amount', default=20 },
     { name = 'green_bananas_enabled', type = 'boolean', label = 'Green Bananas Trigger Shuffling (DKC3)', default = false },
     { name = 'green_banana_threshold', type = 'number',  label = 'Green Banana Amount', default = 3 },
+    { name = 'disable_auto_shuffle', type = 'boolean', label = "Disable Automatic Shuffling", default = true},
     { name = "infinite_lives", type = 'boolean', label = "Infinite Lives", default = true },
     { name = "infinite_coins", type = 'boolean', label = "Infinite Coins", default = true },
-    { name = "world_shuffle", type = 'boolean', label = "World Shuffle (Each game becomes one for each world)", default = false },
+    { name = "world_shuffler", type = 'boolean', label = "World Shuffler", default = false },
 }
 
 plugin.description =
 [[
-	Automatically shuffles the Donkey Kong Country SNES games whenever you collect a configurable amount of bananas.
+	Shuffles the Donkey Kong Country SNES games when you collect a configurable amount of bananas.
+
+    You can also include the minigame stars from 2/3, as well as the green bananas from 3.
+
+    "Infinite Lives" will make it so your lives are always at 5, preventing game overs.
+
+    "Infinite Coins" will give you infinite Banana Coins in 2, and infinite Bear Coins in 3.
+
+    "World Shuffler" splits each game into one game for each world.
+    Since DKC3 has an additional world, as well as more bananas, this is very useful if you want to balance things out more. It's very chaotic though! (in a fun way).
+
+    NOTE: Only US ROMs are supported at this time (you probably have a US ROM.)
 ]]
+
+local bit = bit
+if compare_version("2.9") >= 0 then
+	local success, migration_helpers = pcall(require, "migration_helpers")
+	bit = success and migration_helpers.EmuHawk_pre_2_9_bit and migration_helpers.EmuHawk_pre_2_9_bit() or bit
+end
 
 local loaded_game
 local tag
@@ -78,12 +97,21 @@ local dkc1_banana_bitflags = {
     [0x2B] = {name = "platform perils", flag_end = 0xD0C8 , bonuses = {}},
 }
 
-local memory_size_to_read_function = {
-    [1] = memory.read_u8,
-    [2] = memory.read_u16_le,
-    [4] = memory.read_u32_le
+local Memory = {
+    read_u8 = function(addr) return memory.read_u8(addr, "WRAM") end,
+    read_u16_le = function(addr) return memory.read_u16_le(addr, "WRAM") end,
+    read_u32_le = function(addr) return memory.read_u32_le(addr, "WRAM") end,
+
+    write_u8 = function(addr, val) return memory.write_u8(addr, val, "WRAM") end,
+    write_u16_le = function(addr, val) return memory.write_u16_le(addr,val,"WRAM") end,
+    write_u32_le = function(addr, val) return memory.write_u32_le(addr, val, "WRAM") end
 }
 
+local memory_size_to_read_function = {
+    [1] = Memory.read_u8,
+    [2] = Memory.read_u16_le,
+    [4] = Memory.read_u32_le
+}
 
 local function get_variable(key)
     local cur_val = game_data.cur_data[key]
@@ -111,14 +139,14 @@ end
 local function count_set_bits(x)
     local count = 0
     while x ~= 0 do
-        x = x & (x - 1)
+        x = bit.band(x, (x - 1))
         count = count + 1
     end
     return count
 end
 
 local function count_cleared_bits(current, old)
-    local cleared = old & (~current)
+    local cleared = bit.band(old,bit.bnot(current))
     return count_set_bits(cleared)
 end
 
@@ -132,9 +160,9 @@ local function BCD_counter_read(addr, size)
     size = size or 2
     local BCD_banana_count
     if size == 2 then
-        BCD_banana_count = memory.read_u16_le(addr)
+        BCD_banana_count = Memory.read_u16_le(addr)
     elseif size == 1 then
-        BCD_banana_count = memory.read_u8(addr)
+        BCD_banana_count = Memory.read_u8(addr)
     end
     return BCD_to_decimal(BCD_banana_count)
 end
@@ -164,20 +192,20 @@ local function dkc1_read_boss_HP()
         [0xE4] = 0x1501
     }
     if not stage_to_HP_address[stage] then return end
-    return memory.read_u16_le(stage_to_HP_address[stage])
+    return Memory.read_u16_le(stage_to_HP_address[stage])
 end
 
 local function dkc1_read_banana_flag_offsets()
     local offsets = {}
-    local substage = memory.read_u8(0x565)
+    local substage = Memory.read_u8(0x565)
     local _, stage = get_variable("stage")
     local data = dkc1_banana_bitflags[stage]
     if not data then return {} end
     --0x16 or 0x00 = main stage
     if substage ~= 0x16 and substage ~= 00 and not data.bonuses[substage] then return {} end
     local flag_end = data.bonuses[substage] or data.flag_end
-    for offset = 0x7ED000, 0x7E0000 + flag_end, 2 do
-        local value = memory.read_u16_le(offset)
+    for offset = 0xD000, flag_end, 2 do
+        local value = Memory.read_u16_le(offset)
         if value > 0 then
             table.insert(offsets, offset)
         end
@@ -190,14 +218,14 @@ local function dkc1_read_banana_flags()
     local _, offsets = get_variable("banana_flag_offsets")
     if offsets == nil then return end
     for _, offset in pairs(offsets) do
-        table.insert(flags, memory.read_u16_le(offset))
+        table.insert(flags, Memory.read_u16_le(offset))
     end
     return flags
 end
 
 local function dkc1_is_level_loaded()
-    local fade_timer = memory.read_u8(0x51A)
-    local fade_direction = memory.read_u8(0x51B)
+    local fade_timer = Memory.read_u8(0x51A)
+    local fade_direction = Memory.read_u8(0x51B)
     return (fade_timer > 1 and fade_timer <= 0xF and fade_direction <= 3) and game_data.in_stage()
 end
 
@@ -225,7 +253,7 @@ local function dkc1_check_for_the_single_banana_in_that_one_bonus_game()
     local changed, spawned_sprites, prev_sprites = update_variable("spawned_sprites")
     if not changed then return 0 end
     local substages = { [0x78] = true, [0xC2] = true }
-    local substage = memory.read_u8(0x565)
+    local substage = Memory.read_u8(0x565)
     if substages[substage] and spawned_sprites[1] == 0x42 and prev_sprites[1] == 0x00 then
         return 1
     end
@@ -253,17 +281,17 @@ local function dkc1_read_new_bananas()
 end
 
 local function dkc2_in_stage()
-    local map_or_stage = memory.read_u8(0x1FF)
+    local map_or_stage = Memory.read_u8(0x1FF)
     return map_or_stage == 0x80
 end
 
 local function dkc2_in_bonus()
-    return memory.read_u8(0x515) > 0
+    return Memory.read_u8(0x515) > 0
 end
 
 local function dkc2_in_star_bonus()
     if not dkc2_in_bonus() then return end
-    return memory.read_u8(0x52D) == 0x02
+    return Memory.read_u8(0x52D) == 0x02
 end
 
 local function dkc2_read_stars()
@@ -277,12 +305,12 @@ local function dkc2_read_bananas()
 end
 
 local function dkc3_in_stage()
-    local map_or_stage = memory.read_u16_le(0x18F5)
+    local map_or_stage = Memory.read_u16_le(0x18F5)
     return map_or_stage > 0
 end
 
 local function dkc3_in_non_banana_bonus()
-    local bonus_type = memory.read_u8(0x75E)
+    local bonus_type = Memory.read_u8(0x75E)
     return bonus_type == 0x03 or bonus_type == 0x04
 end
 
@@ -300,7 +328,7 @@ local function dkc3_read_bananas()
 end
 
 local function dkc3_read_stars()
-    if memory.read_u8(0x75E) ~= 0x03 then return end
+    if Memory.read_u8(0x75E) ~= 0x03 then return end
     local total = BCD_counter_read(0x5D3)
     if dkc3_minigame_total_in_bound(total) then
         return total
@@ -308,7 +336,7 @@ local function dkc3_read_stars()
 end
 
 local function dkc3_read_green_bananas()
-    if memory.read_u8(0x75E) ~= 0x04 then return end
+    if Memory.read_u8(0x75E) ~= 0x04 then return end
     local total = BCD_counter_read(0x5D3)
     if dkc3_minigame_total_in_bound(total) then
         return total
@@ -318,29 +346,29 @@ end
 local function dkc2_3_infinite_lives(lives_counter_addr)
     local changed = update_variable("lives_hud")
     if changed then
-        memory.write_u8(game_data.lives_hud_addr, 5)
-        memory.write_u8(lives_counter_addr, 5)
+        Memory.write_u8(game_data.lives_hud_addr, 5)
+        Memory.write_u8(lives_counter_addr, 5)
     end
 end
 
 local function dkc1_infinite_lives()
-    memory.write_u8(0x575,5)
-    memory.write_u8(0x577,5)
+    Memory.write_u8(0x575,5)
+    Memory.write_u8(0x577,5)
 end
 
 local all_game_data = {
     dkc1 = {
         var_data = {
             boss_HP = dkc1_read_boss_HP,
-            stage = function() return memory.read_u8(0x563) end,
-            substage = function() return memory.read_u8(0x565) end,
+            stage = function() return Memory.read_u8(0x563) end,
+            substage = function() return Memory.read_u8(0x565) end,
             is_level_loaded = dkc1_is_level_loaded,
             banana_flag_offsets = dkc1_read_banana_flag_offsets,
             banana_flags = dkc1_read_banana_flags,
-            gnawty_value = function() return memory.read_u16_le(0x1271) end,
-            drum_minion_1_state = function() return memory.read_u16_le(0x1035) end,
-            drum_minion_2_state = function() return memory.read_u16_le(0x1037) end,
-            krool_value = function() return memory.read_u16_le(0x1539) end,
+            gnawty_value = function() return Memory.read_u16_le(0x1271) end,
+            drum_minion_1_state = function() return Memory.read_u16_le(0x1035) end,
+            drum_minion_2_state = function() return Memory.read_u16_le(0x1037) end,
+            krool_value = function() return Memory.read_u16_le(0x1539) end,
             object_ids = function() return read_object_table(0xD45, 15, 2) end,
             object_timers = function() return read_object_table(0x1375, 15, 2) end,
             object_states = function() return read_object_table(0x1029, 15, 2) end,
@@ -358,20 +386,20 @@ local all_game_data = {
             necky_snr = 0xE4,
             k_rool = 0x68
         },
-        in_stage = function() return memory.read_u8(0x527) == 0 end,
+        in_stage = function() return Memory.read_u8(0x527) == 0 end,
         infinite_lives = dkc1_infinite_lives,
         infinite_coins = function() end,
         collectible_updating_func = dkc1_read_new_bananas
     },
     dkc2 = {
         var_data = {
-            stage = function() return memory.read_u8(0x8A8) end,
+            stage = function() return Memory.read_u8(0x8A8) end,
             bananas = dkc2_read_bananas,
-            lives_hud = function() return memory.read_u8(0x8C0) end,
+            lives_hud = function() return Memory.read_u8(0x8C0) end,
             minigame_stars = dkc2_read_stars,
-            boss_HP = function() return memory.read_u16_le(0x652) end,
-            kudgel_value = function() return memory.read_u8(0xF2B) end,
-            krool_value = function() return memory.read_u8(0xB74) end
+            boss_HP = function() return Memory.read_u16_le(0x652) end,
+            kudgel_value = function() return Memory.read_u8(0xF2B) end,
+            krool_value = function() return Memory.read_u8(0xB74) end
         },
         cur_data = {},
         prev_data = {},
@@ -383,25 +411,25 @@ local all_game_data = {
             kreepy_krow = 0xD,
             krool = 0x61
         },
-        infinite_coins = function() memory.write_u8(0x8CA, 99) end,
+        infinite_coins = function() Memory.write_u8(0x8CA, 99) end,
         infinite_lives = function() return dkc2_3_infinite_lives(0x8BE) end,
         lives_hud_addr = 0x8C0,
         in_stage = dkc2_in_stage
     },
      dkc3 = {
         var_data = {
-            stage = function() return memory.read_u8(0x5B9) end,
+            stage = function() return Memory.read_u8(0x5B9) end,
             bananas = dkc3_read_bananas,
-            lives_hud = function() return memory.read_u8(0x18D1) end,
+            lives_hud = function() return Memory.read_u8(0x18D1) end,
             minigame_stars = dkc3_read_stars,
             green_bananas = dkc3_read_green_bananas,
-            generic_boss_state = function() return memory.read_u8(0x98C) end,
-            squirt_left_eye = function() return memory.read_u8(0xA8C) end,
-            squirt_right_eye = function() return memory.read_u8(0xAFA) end,
-            bleak_value = function() return memory.read_u8(0x8B0) end,
+            generic_boss_state = function() return Memory.read_u8(0x98C) end,
+            squirt_left_eye = function() return Memory.read_u8(0xA8C) end,
+            squirt_right_eye = function() return Memory.read_u8(0xAFA) end,
+            bleak_value = function() return Memory.read_u8(0x8B0) end,
             --barbos guard counter = 0x1B9B
-            krool_value = function() return memory.read_u8(0x9FA) end,
-            boss_HP = function() return memory.read_u16_le(0x1B75) end,
+            krool_value = function() return Memory.read_u8(0x9FA) end,
+            boss_HP = function() return Memory.read_u16_le(0x1B75) end,
         },
         cur_data = {},
         prev_data = {},
@@ -416,7 +444,7 @@ local all_game_data = {
             krool_2 = 0x24
         },
         in_stage = dkc3_in_stage,
-        infinite_coins = function() memory.write_u8(0x5C9, 99) end,
+        infinite_coins = function() Memory.write_u8(0x5C9, 99) end,
         infinite_lives = function() return dkc2_3_infinite_lives(0x5D5) end,
         lives_hud_addr = 0x18D1,
         disabled_collectibles = {}
@@ -441,7 +469,7 @@ end
 local function dkc1_drum_hit_check()
     local minion_1_changed, minion_1_state = update_variable("drum_minion_1_state")
     local minion_2_changed, minion_2_state = update_variable("drum_minion_2_state")
-    local current_wave = memory.read_u8(0x1503)
+    local current_wave = Memory.read_u8(0x1503)
     local minion_1_dead = (minion_1_state == 0x01)
     local minion_2_dead = (minion_2_state == 0x01)
     local minion_1_just_killed = (minion_1_dead and minion_1_changed)
@@ -579,6 +607,9 @@ function plugin.on_frame(data, settings)
 end
 
 function plugin.on_setup(data, settings)
+    if settings.disable_auto_shuffle then
+        config.auto_shuffle = false
+    end
     collectibles.bananas.threshold = settings.banana_threshold
     collectibles.minigame_stars.threshold = settings.minigame_star_threshold
     collectibles.green_bananas.threshold = settings.green_banana_threshold
@@ -635,7 +666,7 @@ local function get_tag_from_rom(rom_name)
 end
 
 function plugin.on_games_list_load(data, settings)
-    if not settings.world_shuffle then return end
+    if not settings.world_shuffler then return end
     local world_counts = {
         ["dkc1"] = 6,
         ["dkc2"] = 6,
