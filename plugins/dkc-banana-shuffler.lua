@@ -18,7 +18,7 @@ plugin.settings =
 
 plugin.description =
 [[
-	Shuffles the Donkey Kong Country SNES games when you collect a configurable amount of bananas.
+	Shuffles the Donkey Kong Country SNES games when you collect a configurable amount of bananas. Only US ROMs are supported (you probably have a US ROM.)
 
     You can also include the minigame stars from 2/3, as well as the green bananas from 3.
 
@@ -28,8 +28,7 @@ plugin.description =
 
     "World Shuffler" splits each game into one game for each world.
     Since DKC3 has an additional world, as well as more bananas, this is very useful if you want to balance things out more. It's very chaotic though! (in a fun way).
-
-    NOTE: Only US ROMs are supported at this time (you probably have a US ROM.)
+    NOTE: This setting requires Bizhawk 2.10!
 ]]
 
 local bit = bit
