@@ -126,6 +126,15 @@ function dump(o)
 	return _dump(o, "\t", "\n")
 end
 
+local function run_plugin_function(func_name)
+	for _,plugin in ipairs(plugins) do
+		if plugin[func_name] ~= nil then
+			local pdata = config.plugins[plugin._module]
+			plugin[func_name](pdata.state, pdata.settings)
+		end
+	end
+end
+
 -- saves primary config file
 function save_config(config, f)
 	write_data(f, 'config=\n'..dump(config))
@@ -145,12 +154,20 @@ end
 
 -- Create a lookup table where each key is a value from list
 local function to_lookup(list, lowercase)
-	local lookup = {}
-	for _, value in pairs(list) do
-		if lowercase then value = value:lower() end
-		lookup[value] = true
+    local lookup = {}
+    for _, value in pairs(list) do
+        if lowercase then value = value:lower() end
+        lookup[value] = true
+    end
+    return lookup
+end
+
+function table_keys(t)
+    local keys = {}
+	for key, _ in pairs(t) do
+		table.insert(keys, key)
 	end
-	return lookup
+	return keys
 end
 
 function table_subtract(target, remove, ignore_case)
@@ -191,56 +208,61 @@ local function get_ext(name)
 	return ext and ext:lower() or ""
 end
 
+function add_game(game_name, rom_name, initial_savestate_path)
+	if not file_exists(GAMES_FOLDER..'/'..rom_name) then return end
+	config.active_games[game_name] = {["rom_name"] = rom_name, ["initial_savestate_path"] = initial_savestate_path}
+end
+
 -- get list of games
-function get_games_list(force)
-	local LIST_FILE = '.games-list.txt'
-	local games = get_dir_contents(GAMES_FOLDER, GAMES_FOLDER .. '/' .. LIST_FILE, force or false)
-	local toremove = {}
-	local toremove_ignore_case = {}
+function read_games_directory(force)
+    local LIST_FILE = '.games-list.txt'
+    local games_list = get_dir_contents(GAMES_FOLDER, GAMES_FOLDER .. '/' .. LIST_FILE, force or false)
+    local toremove = {}
+    local toremove_ignore_case = {}
 
-	-- find .cue files and remove the associated bin/iso
-	for _,filename in ipairs(games) do
-		local extension = get_ext(filename)
-		if extension == '.cue' then
-			-- open the cue file, oh god here we go...
-			local fp = assert(io.open(GAMES_FOLDER .. '/' .. filename, 'r'))
-			for line in fp:lines() do
-				local ref_file = line.match(line, '^%s*FILE%s+"(.-)"') or line.match(line, '^%s*FILE%s+(%g+)') -- quotes optional
-				if ref_file then
-					table.insert(toremove_ignore_case, ref_file)
-					-- BizHawk automatically looks for these even if the .cue only references foo.bin
-					table.insert(toremove_ignore_case, ref_file .. '.ecm')
-				end
-			end
-			fp:close()
-		-- ccd/img format?
-		elseif extension == '.ccd' then
-			local primary = filename:sub(1, #filename-4)
-			table.insert(toremove, primary .. '.img')
-			table.insert(toremove, primary .. '.img.ecm')
-			table.insert(toremove, primary .. '.sub')
-		elseif extension == '.xml' then
-			local fp = assert(io.open(GAMES_FOLDER .. '/' .. filename, 'r'))
-			local xml = fp:read("*all")
-			fp:close()
+    -- find .cue files and remove the associated bin/iso
+    for _, filename in ipairs(games_list) do
+        local extension = get_ext(filename)
+        if extension == '.cue' then
+            -- open the cue file, oh god here we go...
+            local fp = assert(io.open(GAMES_FOLDER .. '/' .. filename, 'r'))
+            for line in fp:lines() do
+                local ref_file = line.match(line, '^%s*FILE%s+"(.-)"') or
+                line.match(line, '^%s*FILE%s+(%g+)')                                               -- quotes optional
+                if ref_file then
+                    table.insert(toremove_ignore_case, ref_file)
+                    -- BizHawk automatically looks for these even if the .cue only references foo.bin
+                    table.insert(toremove_ignore_case, ref_file .. '.ecm')
+                end
+            end
+            fp:close()
+            -- ccd/img format?
+        elseif extension == '.ccd' then
+            local primary = filename:sub(1, #filename - 4)
+            table.insert(toremove, primary .. '.img')
+            table.insert(toremove, primary .. '.img.ecm')
+            table.insert(toremove, primary .. '.sub')
+        elseif extension == '.xml' then
+            local fp = assert(io.open(GAMES_FOLDER .. '/' .. filename, 'r'))
+            local xml = fp:read("*all")
+            fp:close()
 
-			-- bizhawk multidisk bundle
-			if xml:find('BizHawk%-XMLGame') then
-				for asset in xml:gmatch('<Asset.-FileName="(.-)".-/>') do
-					asset = asset:gsub('^%.[\\/]', '')
-					table.insert(toremove, asset)
-				end
-			end
-		elseif IGNORED_FILE_EXTS[extension] then
-			table.insert(toremove, filename)
-		end
-	end
+            -- bizhawk multidisk bundle
+            if xml:find('BizHawk%-XMLGame') then
+                for asset in xml:gmatch('<Asset.-FileName="(.-)".-/>') do
+                    asset = asset:gsub('^%.[\\/]', '')
+                    table.insert(toremove, asset)
+                end
+            end
+        elseif IGNORED_FILE_EXTS[extension] then
+            table.insert(toremove, filename)
+        end
+    end
 
-	table_subtract(games, toremove, PLATFORM == 'WIN')
-	table_subtract(games, toremove_ignore_case, true) -- cue file resolving ignores case even on linux
-	table_subtract(games, { LIST_FILE })
-	table_subtract(games, config.completed_games, PLATFORM == 'WIN')
-	return games
+    table_subtract(games_list, toremove, PLATFORM == 'WIN')
+    table_subtract(games_list, toremove_ignore_case, true) -- cue file resolving ignores case even on linux
+    table_subtract(games_list, { LIST_FILE })
+    return games_list
 end
 
 -- delete savestates folder
@@ -286,6 +308,7 @@ function save_current_game()
 end
 
 function file_exists(f)
+	if f == nil then return false end
 	local p = io.open(f, 'r')
 	if p == nil then return false end
 	io.close(p)
@@ -303,10 +326,13 @@ local function on_game_load()
 	frames_since_restart = 0
 	running = true
 
+	local initial_savestate = config.active_games[config.current_game].initial_savestate_path
 	local state = get_savestate_file()
 	if file_exists(state) then
 		log_debug('on_game_load: load state "%s"', state)
 		savestate.load(state)
+	elseif file_exists(initial_savestate) then
+		savestate.load(initial_savestate)
 	end
 
 	-- update swap counter for this game
@@ -326,21 +352,14 @@ local function on_game_load()
 		gui.clearGraphics()
 	end
 
-	update_next_swap_time()
-
-	for _,plugin in ipairs(plugins) do
-		if plugin.on_game_load ~= nil then
-			local pdata = config.plugins[plugin._module]
-			plugin.on_game_load(pdata.state, pdata.settings)
-		end
-	end
-
+    update_next_swap_time()
+	run_plugin_function("on_game_load")
 	save_config(config, 'shuffler-src/config.lua')
 end
 
 function load_game(g)
 	log_debug('load_game(%s)', g)
-	local filename = GAMES_FOLDER .. '/' .. g
+	local filename = GAMES_FOLDER .. '/' .. config.active_games[g].rom_name
 	if not file_exists(filename) then
 		log_console('ROM "%s" not found', g)
 		return false
@@ -358,32 +377,55 @@ function load_game(g)
 	end
 end
 
-function get_next_game()
-	local prev = config.current_game or nil
-	local all_games = get_games_list()
+local function games_list_to_games_map(game_list)
+	--this format allows us to use the same rom for multiple "games," like if you wanted to split a game into different segments with various initial savestates
+    local games = {}
+	for _, game in pairs(game_list) do
+		games[game] = {rom_name = game, initial_savestate_path = nil}
+	end
+	return games
+end
+
+local function games_were_altered()
+	local games_list = read_games_directory()
 
 	-- check to make sure that all of the games correspond to actual
 	-- game files that can be opened
 	local all_exist = true
-	for _, game in ipairs(all_games) do
-		all_exist = all_exist and file_exists(GAMES_FOLDER .. '/' .. game)
+	for _, game_name in ipairs(games_list) do
+		all_exist = all_exist and file_exists(GAMES_FOLDER .. '/' .. game_name)
 	end
 
-	-- if any of the games are missing, force a refresh of the game list
-	if not all_exist then
-		all_games = get_games_list(true)
+	return not all_exist
+end
+
+function refresh_active_games(force_reset)
+    if force_reset or games_were_altered() then
+        local refreshed_games_list = read_games_directory(true)
+        config.active_games = games_list_to_games_map(refreshed_games_list)
+        run_plugin_function("on_games_list_load")
+    end
+	for _, completed_game_key in pairs(config.completed_games) do
+		config.active_games[completed_game_key] = nil
 	end
+end
+
+function get_next_game()
+	local prev = config.current_game or nil
+	-- if any of the games are missing, force a refresh of the game list (user removed roms or added new entries to games-list.txt)
+	refresh_active_games()
+	local game_keys = table_keys(config.active_games)
 
 	-- shuffle_index == -1 represents fully random shuffle order
 	if config.shuffle_index < 0 then
 		-- remove the currently loaded game and see if there are any other options
-		table_subtract(all_games, { prev })
-		if #all_games == 0 then return prev end
-		return all_games[math.random(#all_games)]
+		table_subtract(game_keys, {prev}, PLATFORM == 'WIN')
+		if #game_keys == 0 then return prev end
+		return game_keys[math.random(#game_keys)]
 	else
 		-- manually select the next one
-		config.shuffle_index = (config.shuffle_index % #all_games) + 1
-		return all_games[config.shuffle_index]
+		config.shuffle_index = (config.shuffle_index % #game_keys) + 1
+		return game_keys[config.shuffle_index]
 	end
 end
 
@@ -405,13 +447,8 @@ function swap_game(next_game)
 	end
 
 	-- swap_game() is used for the first load, so check if a game is loaded
-	if config.current_game ~= nil then
-		for _,plugin in ipairs(plugins) do
-			if plugin.on_game_save ~= nil then
-				local pdata = config.plugins[plugin._module]
-				plugin.on_game_save(pdata.state, pdata.settings)
-			end
-		end
+    if config.current_game ~= nil then
+		run_plugin_function("on_game_save")
 	end
 
 	-- mute the sound for a moment to help with the swap
@@ -549,17 +586,13 @@ function mark_complete()
 	-- mark the game as complete in the config file rather than moving files around
 	table.insert(config.completed_games, config.current_game)
 	log_message(config.current_game .. ' marked complete')
-	for _,plugin in ipairs(plugins) do
-		if plugin.on_complete ~= nil then
-			local pdata = config.plugins[plugin._module]
-			plugin.on_complete(pdata.state, pdata.settings)
-		end
-	end
+	run_plugin_function("on_complete")
 
 	-- update list of completed games in file
-	output_completed()
+    output_completed()
+	refresh_active_games()
 
-	if #get_games_list() == 0 then
+	if #table_keys(config.active_games) == 0 then
 		-- the shuffler is complete!
 		running = false
 		save_config(config, 'shuffler-src/config.lua')
@@ -599,9 +632,8 @@ end
 
 function complete_setup()
 	os.remove('message.log')
-
 	if config.plugins ~= nil then
-		for pmodpath,pdata in pairs(config.plugins) do
+        for pmodpath, pdata in pairs(config.plugins) do
 			local pmodule = require(PLUGINS_FOLDER .. '.' .. pmodpath)
 			if checkversion(pmodule.minversion) then
 				log_message('Plugin loaded: ' .. pmodule.name)
@@ -618,8 +650,8 @@ function complete_setup()
 		end
 	end
 
-	local games = get_games_list(true) -- force refresh of the games list
-	if #games == 0 then
+	refresh_active_games(true)
+	if #table_keys(config.active_games) == 0 then
 		local sep = '/'
 		if PLATFORM == 'WIN' then sep = '\\' end
 
@@ -632,8 +664,8 @@ function complete_setup()
 	-- these messages will only appear in the message log
 	log_message('Platform: ' .. PLATFORM, true)
 	log_message('Bizhawk version: ' .. client.getversion(), true)
-	for _,game in ipairs(games) do
-		log_message('GAME FOUND: ' .. game, true)
+	for game_key, _ in ipairs(config.active_games) do
+		log_message('GAME FOUND: ' .. game_key, true)
 	end
 
 	save_config(config, 'shuffler-src/config.lua')
@@ -662,7 +694,7 @@ function get_tag_from_hash_db(target, database)
 	local resp = nil
 	local fp = assert(io.open(database, 'r'))
 	for x in fp:lines() do
-		local hash, tag = x:match("^([0-9A-Fa-f]+)%s+(%S+)")
+        local hash, tag = x:match("^([0-9A-Fa-f]+)%s+(%S+)")
 		if hash == target then resp = tag; break end
 	end
 	fp:close()
@@ -718,12 +750,7 @@ while true do
 		end
 
 		-- let plugins do operations each frame
-		for _,plugin in ipairs(plugins) do
-			if plugin.on_frame ~= nil then
-				local pdata = config.plugins[plugin._module]
-				plugin.on_frame(pdata.state, pdata.settings)
-			end
-		end
+		run_plugin_function("on_frame")
 
 		local current_input = input.get()
 		-- mark the game as complete if the hotkey is pressed (and some time buffer)
