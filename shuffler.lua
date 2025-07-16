@@ -405,7 +405,7 @@ function refresh_active_games(force_reset)
         config.active_games = games_list_to_games_map(refreshed_games_list)
         run_plugin_function("on_games_list_load")
     end
-	for _, completed_game_key in pairs(config.completed_games) do
+	for _, completed_game_key in pairs(config.completed_games or {}) do
 		config.active_games[completed_game_key] = nil
 	end
 end
