@@ -22,6 +22,8 @@ plugin.description =
 
     You can also include the minigame stars from 2/3, as well as the green bananas from 3.
 
+    "Disable Auto Shuffling" will turn off the shuffling that occurs at random intervals.
+
     "Infinite Lives" will make it so your lives are always at 5, preventing game overs.
 
     "Infinite Coins" will give you infinite Banana Coins in 2, and infinite Bear Coins in 3.
@@ -666,6 +668,15 @@ end
 
 function plugin.on_games_list_load(data, settings)
     if not settings.world_shuffler then return end
+    if compare_version("2.10") < 0 then
+        print("World Shuffler error: Bizhawk version must be 2.10!")
+        return
+    end
+    local snes_core = client.getconfig()["PreferredCores"]["SNES"]:lower()
+    if snes_core ~= "snes9x" and snes_core ~= "bsnesv115+" then
+        print("World Shuffler error: Must use Snes9x or BSNESv115+ core!")
+        return
+    end
     local world_counts = {
         ["dkc1"] = 6,
         ["dkc2"] = 6,
@@ -680,7 +691,7 @@ function plugin.on_games_list_load(data, settings)
             local total_worlds = world_counts[game_name]
             for i = 1, total_worlds, 1 do
                 local new_name = string.format("%s_world_%s", game_name, i)
-                local savestate_path = PLUGINS_FOLDER .. '/dkc-banana-shuffler-states/'..game_tag..'/world'..i..'.state'
+                local savestate_path = PLUGINS_FOLDER .. '/dkc-banana-shuffler-states/'..snes_core..'/'..game_tag..'/world'..i..'.state'
                 to_add[new_name] = {rom_name = info.rom_name, initial_savestate = savestate_path}
             end
         end
