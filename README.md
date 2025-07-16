@@ -1,7 +1,7 @@
 # Bizhawk Shuffler 2
-* written by authorblues, inspired by [Brossentia's Bizhawk Shuffler](https://github.com/brossentia/BizHawk-Shuffler), based on slowbeef's original project
-* [tested on Bizhawk v2.6.3-v2.9.1](https://github.com/TASVideos/BizHawk/releases/)  
-* [click here to download the latest version](https://github.com/authorblues/bizhawk-shuffler-2/archive/refs/heads/main.zip)
+* Slightly modified fork with a DKC banana shuffling plugin based on [authorblues's Bizhawk Shuffler 2](https://github.com/authorblues/bizhawk-shuffler-2), inspired by [Brossentia's Bizhawk Shuffler](https://github.com/brossentia/BizHawk-Shuffler), based on slowbeef's original project
+* [Tested on Bizhawk v2.8.0-v2.10.0](https://github.com/TASVideos/BizHawk/releases/)  
+* [Latest release](https://github.com/Brian0255/bizhawk-shuffler-2/releases/)
 
 ## Additional Resources
 * **[Setup Instructions](https://github.com/authorblues/bizhawk-shuffler-2/wiki/Setup-Instructions)**
