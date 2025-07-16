@@ -30,7 +30,7 @@ plugin.description =
 
     "World Shuffler" splits each game into one game for each world.
     Since DKC3 has an additional world, as well as more bananas, this is very useful if you want to balance things out more. It's very chaotic though! (in a fun way).
-    NOTE: This setting requires Bizhawk 2.10!
+    NOTE: This setting requires Bizhawk 2.10 and either the Snes9x or BSNESv115+ core!
 ]]
 
 local bit = bit
