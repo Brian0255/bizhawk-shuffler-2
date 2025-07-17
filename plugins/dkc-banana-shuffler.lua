@@ -597,6 +597,7 @@ local function standard_update_collectibles()
 end
 
 function plugin.on_frame(data, settings)
+    if game_data == nil then return end
     update_variable("stage")
     if settings.infinite_lives then game_data.infinite_lives() end
     if settings.infinite_coins then game_data.infinite_coins() end
@@ -691,11 +692,12 @@ function plugin.on_games_list_load(data, settings)
             local total_worlds = world_counts[game_name]
             for i = 1, total_worlds, 1 do
                 local new_name = string.format("%s_world_%s", game_name, i)
-                local savestate_path = PLUGINS_FOLDER .. '/dkc-banana-shuffler-states/'..snes_core..'/'..game_tag..'/world'..i..'.state'
-                to_add[new_name] = {rom_name = info.rom_name, initial_savestate = savestate_path}
+                local savestate_path = PLUGINS_FOLDER ..
+                '/dkc-banana-shuffler-states/' .. snes_core .. '/' .. game_tag .. '/world' .. i .. '.state'
+                to_add[new_name] = { rom_name = info.rom_name, initial_savestate = savestate_path }
             end
+            to_remove[game_key] = true
         end
-        to_remove[game_key] = true
     end
     for old_key, _ in pairs(to_remove) do
         config.active_games[old_key] = nil
@@ -710,13 +712,9 @@ function plugin.on_game_load(data, settings)
     if not rom_collectible_queues[loaded_game] then
         rom_collectible_queues[loaded_game] = {}
     end
-    tag = get_tag_from_hash_db(gameinfo.getromhash(), 'plugins/dkc-hashes.dat') or nil
-    if tag == nil then
-        error("DKC hash not found in database.")
-        print(config.active_games[config.current_game].rom_name)
-        print(gameinfo.getromhash())
-        return
-    end
+    tag = get_tag_from_hash_db(gameinfo.getromhash(), 'plugins/dkc-hashes.dat')
+        or get_tag_from_rom(config.active_games[config.current_game].rom_name)
+    if tag == nil then print("Current game is not supported by the DKC Shuffler.") return end
     game = tag:match("([^_]+)")
     game_data = all_game_data[game]
     reset_data()
